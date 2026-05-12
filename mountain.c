@@ -508,6 +508,15 @@ void start_animation(void)
     desktop_stop((unsigned char)wid);
     vram_clear();
 
+    // Flush any deferred system VRAM writes (taskbar, clock widgets, etc.)
+    // that survive desktop_stop by running during Idle().  The terrain never
+    // draws below y=190, so char row 24 (y=192-199, bytes 1920..1999 per
+    // scan plane) must be re-cleared after every Idle().
+    Idle();
+    for (b = 0; b < 8; b++)
+        Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                  _symbank, (char *)zero_plane, 80u);
+
     mx0  = Mouse_X();
     my0  = Mouse_Y();
     tick = 0;
@@ -541,6 +550,11 @@ void start_animation(void)
         }
 
         Idle();
+        // Re-clear char row 24 (y=192-199) after each Idle() to wipe any
+        // system VRAM writes that happen while we yield.
+        for (b = 0; b < 8; b++)
+            Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                      _symbank, (char *)zero_plane, 80u);
     }
 }
 
