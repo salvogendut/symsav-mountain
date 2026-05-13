@@ -288,11 +288,11 @@ static void init_terrain(unsigned char num_peaks)
 
     for (y = 0; y < WORLDWIDTH; y++)
         for (x = 0; x < WORLDWIDTH; x++)
-            spread(x, y);
+            if (h[x][y] > 0) spread(x, y);
 
     for (y = 0; y < WORLDWIDTH; y++)
         for (x = 0; x < WORLDWIDTH; x++)
-            spread(x, y);
+            if (h[x][y] > 0) spread(x, y);
 
     for (y = 0; y < WORLDWIDTH; y++) {
         for (x = 0; x < WORLDWIDTH; x++) {
