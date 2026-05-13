@@ -75,8 +75,22 @@ Fullscreen rendering follows the same approach as [symsav-xroach](https://github
 1. Open a fullscreen `WIN_NOTTASKBAR | WIN_NOTMOVEABLE` window
 2. `DSK_SRV_DSKSTP` to freeze the desktop
 3. Clear all 8 CPC character planes via `Bank_Copy` to VRAM (bank 0, all bytes = `0xF0` = ink 1 = black)
-4. Per tick: draw N terrain cells using a Bresenham line algorithm with per-pixel `Bank_Copy` read-modify-write into VRAM
-5. Exit on any key or mouse movement: resume desktop, close window, `Screen_Redraw()`
+4. Per tick: draw N terrain cells using a Bresenham line algorithm with per-pixel `Bank_Copy` into VRAM
+5. After every `Idle()`: call `vram_restore_lower()` to repair any interrupt-written blocks
+6. Exit on any key or mouse movement: resume desktop, close window, `Screen_Redraw()`
+
+### VRAM corruption and the shadow buffer
+
+The SymbOS kernel writes 8×8 char-cell blocks into VRAM rows 12–24 (y = 96–199) during and around every `Idle()` call, even after `DSK_SRV_DSKSTP`. Because the terrain is drawn once per cell rather than redrawn every frame, these blocks accumulate visibly.
+
+The fix is a **write-through shadow buffer** (`lbuf`, 8320 bytes in the `_data` segment):
+
+- All pixels written at y ≥ 96 (char row 12+) update `lbuf` first, then copy from `lbuf` to VRAM — never reading back from VRAM.
+- After every `Idle()`, `vram_restore_lower()` writes the full `lbuf` back to VRAM rows 12–24, overwriting whatever the interrupt deposited.
+- Because `lbuf` contains only the screensaver's own pixels (never contaminated by a VRAM read), any interrupt corruption during a restore call is silently fixed on the next restore.
+- During the regen cycle (screen clear + terrain init), `vram_restore_lower()` is called immediately after each expensive operation so corruption doesn't linger for multiple seconds.
+
+Pixels above y = 96 use the standard read-modify-write path (one `Bank_Copy` read + one write per pixel) since the upper half is not affected by the interrupt.
 
 VRAM address formula for pixel (x, y):
 
