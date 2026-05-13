@@ -382,7 +382,9 @@ static void anim_tick(unsigned char cells_per_tick, unsigned char num_peaks)
             anim_stage = 2;
     } else {
         vram_clear();
+        vram_restore_lower();
         init_terrain(num_peaks);
+        vram_restore_lower();
         draw_x = 0;
         draw_y = 0;
         anim_stage = 0;
