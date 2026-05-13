@@ -67,10 +67,6 @@
 // Data-segment buffers
 // --------------------------------------------------------------------------
 
-// 2000-byte plane used for the full-screen clear (25 char rows * 80 bytes).
-// BSS is guaranteed zero by the loader; filled with 0xF0 at runtime.
-_data unsigned char zero_plane[2000];
-
 // Terrain height map.  int = 16-bit signed on Z80.
 _data int h[WORLDWIDTH][WORLDWIDTH];
 
@@ -237,7 +233,7 @@ static void vram_clear(void)
     for (k = 0; k < 8; k++) {
         Bank_Copy(0,
             (char *)(0xC000u + (unsigned short)k * 0x0800u),
-            _symbank, (char *)zero_plane, 2000u);
+            _symbank, (char *)lbuf, 2000u);
     }
 }
 
@@ -502,9 +498,6 @@ void start_animation(void)
                      (speed == 3) ? CELLS_FAST  : CELLS_NORMAL;
 
     srand((unsigned int)Sys_Counter());
-
-    // Prepare the zero-plane buffer (all ink1 = black = 0xF0).
-    memset(zero_plane, 0xF0, sizeof(zero_plane));
 
     // Initialise terrain.
     init_terrain(num_peaks);
