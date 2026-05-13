@@ -1,3 +1,4 @@
+![Example Image](mountain.png)
 # symsav-mountain
 
 A 3D isometric terrain screensaver for [SymbOS](https://www.symbos.org/) on the Amstrad CPC.
