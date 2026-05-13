@@ -82,11 +82,6 @@ _data unsigned char pixbuf;
 _data char cfgdat[64];
 _data char init_tmp[64];
 
-// Shadow buffer for VRAM char rows 12-24 (y=96-199): 8 scan planes x 13 rows x 80 bytes.
-// Written in sync with every pixel drawn in the lower half; restored after every Idle()
-// to overwrite any kernel VRAM corruption that occurs while we yield.
-_data unsigned char lbuf[8][1040];
-
 // --------------------------------------------------------------------------
 // Animation state
 // --------------------------------------------------------------------------
@@ -163,8 +158,7 @@ _transfer char       empty_str[1];
 static void vram_pixel(int x, int y, unsigned char ink)
 {
     unsigned short addr;
-    unsigned char pos, lo_mask, hi_mask, crow, scan;
-    unsigned char *pbuf;
+    unsigned char pos, lo_mask, hi_mask;
 
     if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
 
@@ -173,27 +167,16 @@ static void vram_pixel(int x, int y, unsigned char ink)
          + (unsigned short)(y &  7) * 0x0800u
          + (unsigned short)(x >> 2);
 
+    Bank_Copy(_symbank, (char *)&pixbuf, 0, (char *)addr, 1u);
+
     pos     = (unsigned char)(x & 3);
     lo_mask = (unsigned char)(0x80u >> pos);
     hi_mask = (unsigned char)(0x08u >> pos);
+    pixbuf &= (unsigned char)(~(lo_mask | hi_mask));
+    if (ink & 1) pixbuf |= lo_mask;
+    if (ink & 2) pixbuf |= hi_mask;
 
-    crow = (unsigned char)(y >> 3);
-    if (crow >= 12) {
-        // Lower half: write through shadow buffer so Idle() corruption can be undone.
-        scan = (unsigned char)(y & 7);
-        pbuf = &lbuf[scan][(unsigned short)(crow - 12u) * 80u + (unsigned short)(x >> 2)];
-        *pbuf &= (unsigned char)(~(lo_mask | hi_mask));
-        if (ink & 1) *pbuf |= lo_mask;
-        if (ink & 2) *pbuf |= hi_mask;
-        Bank_Copy(0, (char *)addr, _symbank, (char *)pbuf, 1u);
-    } else {
-        // Upper half: plain read-modify-write.
-        Bank_Copy(_symbank, (char *)&pixbuf, 0, (char *)addr, 1u);
-        pixbuf &= (unsigned char)(~(lo_mask | hi_mask));
-        if (ink & 1) pixbuf |= lo_mask;
-        if (ink & 2) pixbuf |= hi_mask;
-        Bank_Copy(0, (char *)addr, _symbank, (char *)&pixbuf, 1u);
-    }
+    Bank_Copy(0, (char *)addr, _symbank, (char *)&pixbuf, 1u);
 }
 
 // --------------------------------------------------------------------------
@@ -224,23 +207,10 @@ static void vram_line(int x0, int y0, int x1, int y1, unsigned char ink)
 static void vram_clear(void)
 {
     unsigned char k;
-    memset(lbuf, 0xF0, sizeof(lbuf));
     for (k = 0; k < 8; k++) {
         Bank_Copy(0,
             (char *)(0xC000u + (unsigned short)k * 0x0800u),
             _symbank, (char *)zero_plane, 2000u);
-    }
-}
-
-// Restore VRAM char rows 12-24 from the shadow buffer, overwriting any
-// kernel corruption that occurred during Idle().
-static void vram_restore_lower(void)
-{
-    unsigned char k;
-    for (k = 0; k < 8; k++) {
-        Bank_Copy(0,
-            (char *)(0xC000u + (unsigned short)k * 0x0800u + 12u * 80u),
-            _symbank, (char *)lbuf[k], 13u * 80u);
     }
 }
 
@@ -538,10 +508,14 @@ void start_animation(void)
     desktop_stop((unsigned char)wid);
     vram_clear();
 
-    // Flush any deferred system VRAM writes that survive desktop_stop by
-    // running during Idle(), then restore the lower half from the shadow buffer.
+    // Flush any deferred system VRAM writes (taskbar, clock widgets, etc.)
+    // that survive desktop_stop by running during Idle().  The terrain never
+    // draws below y=190, so char row 24 (y=192-199, bytes 1920..1999 per
+    // scan plane) must be re-cleared after every Idle().
     Idle();
-    vram_restore_lower();
+    for (b = 0; b < 8; b++)
+        Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                  _symbank, (char *)zero_plane, 80u);
 
     mx0  = Mouse_X();
     my0  = Mouse_Y();
@@ -576,7 +550,11 @@ void start_animation(void)
         }
 
         Idle();
-        vram_restore_lower();
+        // Re-clear char row 24 (y=192-199) after each Idle() to wipe any
+        // system VRAM writes that happen while we yield.
+        for (b = 0; b < 8; b++)
+            Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                      _symbank, (char *)zero_plane, 80u);
     }
 }
 
