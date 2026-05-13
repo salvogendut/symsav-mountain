@@ -82,12 +82,6 @@ _data unsigned char pixbuf;
 _data char cfgdat[64];
 _data char init_tmp[64];
 
-// Snapshot buffer: flat copy of VRAM char rows 12-24 (y=96-199).
-// 8 scan planes x 13 char rows x 80 bytes = 8320 bytes.
-// Captured right before every Idle(); written back right after to undo
-// whatever the kernel draws into VRAM while we yield.
-_data unsigned char lbuf[8320];
-
 // --------------------------------------------------------------------------
 // Animation state
 // --------------------------------------------------------------------------
@@ -217,32 +211,6 @@ static void vram_clear(void)
         Bank_Copy(0,
             (char *)(0xC000u + (unsigned short)k * 0x0800u),
             _symbank, (char *)zero_plane, 2000u);
-    }
-}
-
-// Snapshot char rows 12-24 from VRAM into lbuf (call before Idle()).
-static void vram_snapshot_lower(void)
-{
-    unsigned char k;
-    for (k = 0; k < 8; k++) {
-        Bank_Copy(_symbank,
-            (char *)lbuf + (unsigned short)k * 1040u,
-            0,
-            (char *)(0xC000u + (unsigned short)k * 0x0800u + 960u),
-            1040u);
-    }
-}
-
-// Restore char rows 12-24 from lbuf into VRAM (call after Idle()).
-static void vram_restore_lower(void)
-{
-    unsigned char k;
-    for (k = 0; k < 8; k++) {
-        Bank_Copy(0,
-            (char *)(0xC000u + (unsigned short)k * 0x0800u + 960u),
-            _symbank,
-            (char *)lbuf + (unsigned short)k * 1040u,
-            1040u);
     }
 }
 
@@ -540,11 +508,14 @@ void start_animation(void)
     desktop_stop((unsigned char)wid);
     vram_clear();
 
-    // Snapshot the (clean) lower half, yield to flush any pending kernel VRAM
-    // writes, then restore — overwriting whatever the kernel wrote.
-    vram_snapshot_lower();
+    // Flush any deferred system VRAM writes (taskbar, clock widgets, etc.)
+    // that survive desktop_stop by running during Idle().  The terrain never
+    // draws below y=190, so char row 24 (y=192-199, bytes 1920..1999 per
+    // scan plane) must be re-cleared after every Idle().
     Idle();
-    vram_restore_lower();
+    for (b = 0; b < 8; b++)
+        Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                  _symbank, (char *)zero_plane, 80u);
 
     mx0  = Mouse_X();
     my0  = Mouse_Y();
@@ -578,9 +549,12 @@ void start_animation(void)
                 anim_tick(cells_per_tick, num_peaks);
         }
 
-        vram_snapshot_lower();
         Idle();
-        vram_restore_lower();
+        // Re-clear char row 24 (y=192-199) after each Idle() to wipe any
+        // system VRAM writes that happen while we yield.
+        for (b = 0; b < 8; b++)
+            Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                      _symbank, (char *)zero_plane, 80u);
     }
 }
 
