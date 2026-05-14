@@ -3,6 +3,8 @@
 
 A 3D isometric terrain screensaver for [SymbOS](https://www.symbos.org/) on the Amstrad CPC.
 
+> **Alpha version — use at your own risk.** This software is in an early alpha state and may cause harm to your system. If you choose to try it, you do so entirely at your own risk.
+
 > **Requires Mode 1** — this screensaver only works in 320×200 Mode 1 (4 colours). Running it in any other screen mode will produce incorrect output.
 
 Inspired by Pascal Pensa's `mountain` module from the [xlockmore](https://www.tux.org/xlockmore/) / xscreensaver suite (1995).
