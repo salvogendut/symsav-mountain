@@ -3,7 +3,7 @@
 
 SCC="${SCC:-../scc/bin/cc}"
 
-"$SCC" mountain.c \
+"$SCC" mountain.c mountain_msx.s \
     -N "Mountain" \
     -o mountain.sav \
     -h 512

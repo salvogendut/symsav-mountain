@@ -18,6 +18,11 @@
 #define SCREEN_W  320
 #define SCREEN_H  200
 
+// MSX Screen 7 geometry
+#define MSX_W  512
+#define MSX_H  212
+#define MSX_Y_OFFSET  78   // keeps front row near bottom of 212px screen
+
 // --------------------------------------------------------------------------
 // Mode-1 VRAM helpers
 // --------------------------------------------------------------------------
@@ -63,9 +68,18 @@
 // giving ~70 px of sky headroom for peaks at the front.
 #define Y_OFFSET  70
 
+// MSX colour bytes: both nibbles = same ink (2-pixel write)
+// Follows SymbOS MSX colour index conventions (same as xmatrix).
+#define MSX_COL_BG    0x11   // COLOR_BLACK  — sky
+#define MSX_COL_LOW   0x99   // COLOR_GREEN  — valley floors (dark green)
+#define MSX_COL_MID   0xAA   // COLOR_LGREEN — hillsides (light green)
+#define MSX_COL_HIGH  0x88   // COLOR_WHITE  — snow peaks
+
 // --------------------------------------------------------------------------
 // Data-segment buffers
 // --------------------------------------------------------------------------
+
+extern void vdp_fill(unsigned int vram_addr, unsigned char fill_byte, unsigned short len);
 
 // 2000-byte plane used for the full-screen clear (25 char rows * 80 bytes).
 // BSS is guaranteed zero by the loader; filled with 0xF0 at runtime.
@@ -98,6 +112,10 @@ _transfer int draw_x;
 _transfer int draw_y;
 _transfer unsigned char anim_stage;  // 0=draw  1=pause  2=regen
 _transfer int stage_timer;
+_transfer char is_msx;
+_transfer unsigned short screen_w;
+_transfer unsigned short screen_h;
+_transfer int y_offset;
 
 // Ticks to hold the finished terrain before regenerating.
 #define PAUSE_TICKS  120
@@ -168,8 +186,19 @@ static void vram_pixel(int x, int y, unsigned char ink)
 {
     unsigned short addr, lbuf_off;
     unsigned char pos, lo_mask, hi_mask, crow;
+    unsigned char msx_byte;
 
-    if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
+    if (x < 0 || x >= (int)screen_w || y < 0 || y >= (int)screen_h) return;
+
+    if (is_msx) {
+        msx_byte = (ink == 0) ? MSX_COL_HIGH :
+                   (ink == 1) ? MSX_COL_BG   :
+                   (ink == 2) ? MSX_COL_LOW   : MSX_COL_MID;
+        vdp_fill((unsigned int)(unsigned short)y * 256u
+                 + (unsigned int)((unsigned short)x >> 1),
+                 msx_byte, 1u);
+        return;
+    }
 
     addr = 0xC000u
          + (unsigned short)(y >> 3) * 80u
@@ -182,8 +211,6 @@ static void vram_pixel(int x, int y, unsigned char ink)
 
     crow = (unsigned char)(y >> 3);
     if (crow >= 12) {
-        // Lower half: write through lbuf so vram_restore_lower() always has
-        // known-good data and never needs to read back from VRAM.
         lbuf_off = (unsigned short)(y & 7) * 1040u
                  + (unsigned short)(crow - 12u) * 80u
                  + (unsigned short)(x >> 2);
@@ -230,8 +257,10 @@ static void vram_clear(void)
     unsigned char k;
     unsigned char *p;
     unsigned short i;
-    // Initialise lbuf to ink1 (0xF0) using an explicit byte loop — memset
-    // cannot be trusted for 8320-byte arrays in the SCC runtime.
+    if (is_msx) {
+        vdp_fill(0u, 0x11u, 54272u);
+        return;
+    }
     p = lbuf;
     for (i = 0; i < 8320u; i++) { *p = 0xF0u; p++; }
     for (k = 0; k < 8; k++) {
@@ -309,16 +338,16 @@ static void init_terrain(unsigned char num_peaks)
 static int proj_sx(int gx, int gy)
 {
     int x2, y2;
-    x2 = gx * (2 * SCREEN_W) / (3 * WORLDWIDTH);
-    y2 = gy * (2 * SCREEN_H) / (3 * WORLDWIDTH);
-    return (x2 - y2 / 2) + (SCREEN_W / 4);
+    x2 = gx * (2 * (int)screen_w) / (3 * WORLDWIDTH);
+    y2 = gy * (2 * (int)screen_h) / (3 * WORLDWIDTH);
+    return (x2 - y2 / 2) + (int)(screen_w / 4u);
 }
 
 static int proj_sy(int gy, int hv)
 {
     int y2;
-    y2 = gy * (2 * SCREEN_H) / (3 * WORLDWIDTH);
-    return y2 - hv + Y_OFFSET;
+    y2 = gy * (2 * (int)screen_h) / (3 * WORLDWIDTH);
+    return y2 - hv + y_offset;
 }
 
 // --------------------------------------------------------------------------
@@ -382,9 +411,9 @@ static void anim_tick(unsigned char cells_per_tick, unsigned char num_peaks)
             anim_stage = 2;
     } else {
         vram_clear();
-        vram_restore_lower();
+        if (!is_msx) vram_restore_lower();
         init_terrain(num_peaks);
-        vram_restore_lower();
+        if (!is_msx) vram_restore_lower();
         draw_x = 0;
         draw_y = 0;
         anim_stage = 0;
@@ -487,6 +516,18 @@ void start_animation(void)
     unsigned short resp;
     unsigned char  tick;
 
+    // Detect platform
+    is_msx = ((Sys_Type() & TYPE_MSX) != 0) ? 1 : 0;
+    if (is_msx) {
+        screen_w = MSX_W;
+        screen_h = MSX_H;
+        y_offset = MSX_Y_OFFSET;
+    } else {
+        screen_w = SCREEN_W;
+        screen_h = SCREEN_H;
+        y_offset = Y_OFFSET;
+    }
+
     speed = (unsigned char)cfgdat[4];
     if (speed < 1 || speed > 3) speed = 2;
 
@@ -522,8 +563,8 @@ void start_animation(void)
     anim_ctrl[0].param  = AREA_16COLOR | COLOR_BLACK;
     anim_ctrl[0].x      = 0;
     anim_ctrl[0].y      = 0;
-    anim_ctrl[0].w      = SCREEN_W;
-    anim_ctrl[0].h      = SCREEN_H;
+    anim_ctrl[0].w      = screen_w;
+    anim_ctrl[0].h      = screen_h;
     anim_ctrl[0].unused = 0;
 
     memset(&anim_cg, 0, sizeof(anim_cg));
@@ -535,14 +576,14 @@ void start_animation(void)
     anim_win.state    = WIN_NORMAL;
     anim_win.flags    = WIN_NOTTASKBAR | WIN_NOTMOVEABLE;
     anim_win.pid      = _sympid;
-    anim_win.w        = SCREEN_W;
-    anim_win.h        = SCREEN_H;
-    anim_win.wfull    = SCREEN_W;
-    anim_win.hfull    = SCREEN_H;
+    anim_win.w        = screen_w;
+    anim_win.h        = screen_h;
+    anim_win.wfull    = screen_w;
+    anim_win.hfull    = screen_h;
     anim_win.wmin     = 32;
     anim_win.hmin     = 24;
-    anim_win.wmax     = SCREEN_W;
-    anim_win.hmax     = SCREEN_H;
+    anim_win.wmax     = screen_w;
+    anim_win.hmax     = screen_h;
     anim_win.title    = empty_str;
     anim_win.status   = empty_str;
     anim_win.controls = &anim_cg;
@@ -554,7 +595,7 @@ void start_animation(void)
     vram_clear();
 
     Idle();
-    vram_restore_lower();
+    if (!is_msx) vram_restore_lower();
 
     mx0  = Mouse_X();
     my0  = Mouse_Y();
@@ -589,7 +630,7 @@ void start_animation(void)
         }
 
         Idle();
-        vram_restore_lower();
+        if (!is_msx) vram_restore_lower();
     }
 }
 
